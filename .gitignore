@@ -1,0 +1,6 @@
+*.o
+*.out
+*.dSYM/
+toka-httpd-demo
+demo/toka-httpd-demo
+.DS_Store

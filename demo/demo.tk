@@ -1,0 +1,104 @@
+// toka-httpd v0.1 Demo
+//
+// 用 Toka 写的轻量 HTTP 服务器
+//
+// 路由:
+//   GET /                  -> www/index.html
+//   GET /hello             -> "Hello from Toka!"
+//   GET /json              -> {"msg":"Hello from Toka-httpd!"}
+//   GET /echo?msg=<text>   -> "You said: <text>"
+//   GET /<path>            -> www/<path> 静态文件
+//
+// 编译:
+//   tokac -o server -I <toka>/lib -I <toka-httpd> demo.tk
+//
+// 运行:
+//   ./server  # 监听 :8080
+
+import std/string::String
+import std/net::{TcpListener, TcpStream, SocketAddrV4, Ipv4Addr}
+import std/net_http::{HttpRequest, HttpResponse, HttpMethod, parse_http_request}
+import std/io::println
+
+import httpd::{parse_query, json_res, text_res, file_res, match_path}
+
+fn handle_request(req: HttpRequest) -> HttpResponse {
+    if req.method == HttpMethod::GET {
+        auto path = match_path(req.path)
+
+        // Note: using find_str instead of eq due to String::eq bug
+        // on equal-length strings (e.g. "/echo" vs "/json")
+
+        if path.find_str(String::from("/hello")) == 0 {
+            return text_res(String::from("Hello from Toka!\n"))
+        }
+
+        if path.find_str(String::from("/echo")) == 0 {
+            auto (_, qs) = parse_query(req.path)
+            auto msg# = String::from("You said: ")
+            msg#.push_str(qs.c_str())
+            return text_res(msg)
+        }
+
+        if path.find_str(String::from("/json")) == 0 {
+            return json_res(String::from("{\"msg\":\"Hello from Toka-httpd!\",\"lang\":\"Toka\",\"version\":\"0.1\"}"))
+        }
+
+        // Static file fallback
+        if path.eq(String::from("/")) || path.len() == 0 {
+            return file_res(String::from("www/index.html"))
+        }
+        auto filepath# = String::from("www")
+        filepath#.push_str(path.c_str())
+        return file_res(filepath)
+    }
+    return HttpResponse::not_found()
+}
+
+fn read_http_request(stream#: TcpStream) -> HttpRequest {
+    unsafe {
+        auto *bufheap = unsafe alloc [4096] u8
+        auto *buf_start = *bufheap as *u8
+        auto result = stream#.read(*buf_start, 4095:usize)
+        if result.is_err() {
+            return HttpRequest(method = HttpMethod::UNKNOWN, path = String::from(""), body = String::from(""))
+        }
+        auto n = result.unwrap()
+        auto raw = String::from_raw(*buf_start, n)
+        return parse_http_request(raw)
+    }
+}
+
+fn send_response(stream#: TcpStream, resp#: HttpResponse) {
+    auto raw = resp#.to_string()
+    stream#.write_string(raw)
+}
+
+pub fn main() -> i32 {
+    println("=== Toka-httpd v0.1 ===\n")
+    println("Listening on :8080\n")
+
+    auto ip = Ipv4Addr::new(0, 0, 0, 0)
+    auto addr = SocketAddrV4::new(ip, 8080:u16)
+    auto listener# = TcpListener::bind(addr)
+    if !listener.is_valid() {
+        println("ERROR: Failed to bind!\n")
+        return -1
+    }
+
+    loop {
+        auto stream# = listener#.accept()
+        if !stream.is_valid() { continue }
+
+        auto req = read_http_request(stream)
+        if req.method == HttpMethod::UNKNOWN {
+            stream#.close()
+            continue
+        }
+
+        auto resp = handle_request(req)
+        send_response(stream, resp)
+        stream#.close()
+    }
+    return 0
+}

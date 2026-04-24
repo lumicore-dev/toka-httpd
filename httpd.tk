@@ -1,0 +1,101 @@
+// toka-httpd - Minimal HTTP Server Library
+//
+// A lightweight HTTP server built on std/net and std/net_http.
+// Provides:
+//   - Request/Response building helpers
+//   - Query string parsing
+//   - Static file serving with MIME detection
+
+import std/string::String
+import std/net_http::{HttpRequest, HttpResponse, HttpMethod, parse_http_request}
+import std/fs::read_to_string
+
+// ==========================================
+// String Helpers
+// ==========================================
+
+fn last_index_of(s: String, c: i32) -> i32 {
+    auto len = s.len() as i32
+    auto i# = len - 1
+    while i >= 0 {
+        unsafe {
+            auto *buf = s.c_str() as *[char]
+            if buf[i] == c as char { return i }
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+// ==========================================
+// Query String Parser
+// ==========================================
+
+/// Split a URL path into (clean_path, query_string).
+/// e.g. "/search?q=toka" → ("/search", "q=toka")
+pub fn parse_query(path: String) -> (String, String) {
+    auto pos = path.find_char(63 as char)  // '?'
+    if pos < 0 { return (path, String::from("")) }
+    auto clean_path = path.substring(0, pos)
+    auto query_str = path.substring(pos + 1, path.len() as i32)
+    return (clean_path, query_str)
+}
+
+// ==========================================
+// Response Helpers
+// ==========================================
+
+/// Create a JSON (application/json) response
+pub fn json_res(body: String) -> HttpResponse {
+    return HttpResponse(status_code = 200, content_type = String::from("application/json"), body = body)
+}
+
+/// Create an HTML (text/html) response
+pub fn html_res(body: String) -> HttpResponse {
+    return HttpResponse::html(body)
+}
+
+/// Create a plain text (text/plain) response
+pub fn text_res(body: String) -> HttpResponse {
+    return HttpResponse::ok(body)
+}
+
+/// Create a response from a file, auto-detecting MIME type from extension.
+/// Returns 404 if the file doesn't exist.
+pub fn file_res(filepath: String) -> HttpResponse {
+    auto file_result = read_to_string(filepath)
+    if file_result.is_err() {
+        return HttpResponse::not_found()
+    }
+    auto content = file_result.unwrap()
+
+    auto ext_pos = last_index_of(filepath, 46)  // '.'
+    auto content_type# = String::from("application/octet-stream")
+
+    if ext_pos > 0 {
+        auto ext = filepath.substring(ext_pos, filepath.len() as i32)
+        if ext == String::from(".html") { content_type = String::from("text/html") }
+        else if ext == String::from(".css")  { content_type = String::from("text/css") }
+        else if ext == String::from(".js")   { content_type = String::from("application/javascript") }
+        else if ext == String::from(".json") { content_type = String::from("application/json") }
+        else if ext == String::from(".svg")  { content_type = String::from("image/svg+xml") }
+        else if ext == String::from(".txt")  { content_type = String::from("text/plain") }
+    }
+
+    return HttpResponse(status_code = 200, content_type = content_type, body = content)
+}
+
+/// Returns a 404 Not Found response
+pub fn not_found_res() -> HttpResponse {
+    return HttpResponse::not_found()
+}
+
+// ==========================================
+// Route Utilities
+// ==========================================
+
+/// Strip query string from a request path for route matching
+pub fn match_path(path: String) -> String {
+    auto (clean_path, _) = parse_query(path)
+    return clean_path
+}
